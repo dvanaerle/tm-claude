@@ -1,5 +1,4 @@
-// @ts-nocheck
-import { useState, useRef, useEffect, useCallback } from "react";
+import { useState, useRef, useEffect, useCallback, useMemo } from "react";
 
 const T = {
   // primary
@@ -43,7 +42,16 @@ function calcPrice(c) {
   const uP     = c.swUProfiel ? 119 : 0;
   const ctrlP  = c.ledController ? 149 : 0;
   const staP   = c.extraStaander ? 189 : 0;
-  return Math.round(ob+oe+sw+sa+spieP+hoekP+uP+ctrlP+staP+(c.zonweringStand?897:0));
+  const bambooP = (()=>{
+    const bb = c.bamboo;
+    if (!bb || !parseFloat(bb.width) || !parseFloat(bb.depth)) return 0;
+    const W = parseFloat(bb.width), D = parseFloat(bb.depth);
+    const area = W * D;
+    // Rough estimate: ~€85/bundle of 4 boards (0.258 m² each), plus accessories flat rate
+    const boardBundles = Math.ceil(area * 4 / 4);
+    return Math.round(boardBundles * 85 + (bb.crossBeams?area*12:0) + (bb.pedestal2435||bb.pedestal6592?area*8:0));
+  })();
+  return Math.round(ob+oe+sw+sa+spieP+hoekP+uP+ctrlP+staP+(c.zonweringStand?897:0)+bambooP);
 }
 
 
@@ -120,7 +128,8 @@ const ALL_STEPS = [
   { id:"sw_zij",      label:"Zijkanten",    group:"Schuifwanden", cond:c=>c.swWil },
   { id:"sw_acc",      label:"Type & afwerking",group:"Schuifwanden", cond:c=>c.swWil },
   { id:"extra_zon",   label:"Ext. Zonwering",group:"Extra's",    cond:c=>c.zonwering!=="auto" },
-  { id:"overzicht",   label:"Overzicht",    group:"Bestellen" },
+  { id:"bamboo",      label:"Bamboe Vlonders",group:"Extra's" },
+  { id:"overzicht",   label:"Overzicht",      group:"Bestellen" },
 ];
 
 /* ─── STEP VALIDATION ───────────────────────────────────────
@@ -157,7 +166,7 @@ function canAdvance(stepId, c) {
     }
     case "sw_acc":      return !!c.swSteellook;
     case "extra_zon":   return true;
-    case "overzicht":   return true;
+    case "bamboo":      return true; // optional step, always advanceable
     default:            return true;
   }
 }
@@ -174,6 +183,13 @@ const INIT = {
   swSpie:false, swHoek:false, swUProfiel:false,
   ledController:false, extraStaander:false,
   zonweringStand:false, shadingStand:false,
+  // Bamboo decking
+  bamboo: {
+    width:"", depth:"", direction:"depth",
+    crossBeams:false, pedestal2435:false, pedestal6592:false,
+    extPad15:false, extPad40:false,
+    skirt1:false, skirt2:false, skirt3:false, skirt4:false,
+  },
 };
 
 /* ─── GLOBAL CSS ─── */
@@ -586,8 +602,8 @@ function StepLijn({ c, s }) {
           <Radio key={l.id} active={c.lijn===l.id} onClick={()=>s({...c,lijn:l.id,stijl:STIJLEN.find(x=>x.avail.includes(l.id))?.id||"modern",dakSub:DAKTYPEN[l.id][0].id})}>
             <div style={{flexShrink:0,borderRadius:8,overflow:"hidden"}}>
               <Img w={96} h={72} label={l.name}/>
-              
-              
+
+
             </div>
             <div style={{flex:1}}>
               <div style={{display:"flex",alignItems:"center",gap:7,marginBottom:5}}>
@@ -1174,6 +1190,299 @@ function Accordion({ label, price, rows, defaultOpen=true, badge=null }) {
   );
 }
 
+/* ─── BAMBOO CONSTANTS ─── */
+const BAM_BL=1.852, BAM_BW=0.139, BAM_DB=0.3704, BAM_SAW=1.04;
+
+function calcBamboo(b) {
+  const W=parseFloat(b.width)||0, D=parseFloat(b.depth)||0;
+  if(!W||!D) return null;
+  const area=W*D, circ=2*W+2*D, dir=b.direction;
+  const cbRows=Math.ceil(dir==="depth"?D/BAM_DB:W/BAM_DB)+1;
+  const boards_amt=area*4, boards_pck=Math.ceil(boards_amt/4);
+  const skirtM=(b.skirt1?W:0)+(b.skirt2?D:0)+(b.skirt3?W:0)+(b.skirt4?D:0);
+  const skirt_amt=Math.ceil((skirtM/BAM_BL)*BAM_SAW), skirt_pck=Math.ceil(skirt_amt/4);
+  const cb_amt=b.crossBeams?Math.ceil((dir==="depth"?(Math.ceil(D/BAM_DB)+1)*W:(Math.ceil(W/BAM_DB)+1)*D)*BAM_SAW):0;
+  const cb_pck=Math.ceil(cb_amt/3);
+  const clips_base=dir==="depth"?Math.ceil((Math.ceil(D/BAM_DB)+1)*(W/BAM_BW)):Math.ceil((Math.ceil(W/BAM_DB)+1)*(D/BAM_BW));
+  const clips_amt=clips_base+skirt_pck*5*2, clips_pck=Math.ceil(clips_amt/100);
+  const uclips_amt=(Math.ceil(W/BAM_DB)+1)*2+(Math.ceil(D/BAM_DB)+1)*2, uclips_pck=Math.ceil(uclips_amt/50);
+  const zclips_amt=skirt_pck*5*2, zclips_pck=Math.ceil(zclips_amt/50);
+  const ped_base=dir==="depth"?(Math.ceil(D/BAM_DB)+1)*((W/0.5)+1):(Math.ceil(W/BAM_DB)+1)*((D/0.5)+1);
+  const p2435_50=b.pedestal2435?Math.floor(ped_base/50):0, p2435_10=b.pedestal2435?Math.ceil((ped_base-p2435_50*50)/10):0;
+  const p6592_50=b.pedestal6592?Math.floor(ped_base/50):0, p6592_10=b.pedestal6592?Math.ceil((ped_base-p6592_50*50)/10):0;
+  const ext15_50=b.extPad15?p2435_50+p6592_50:0, ext15_10=b.extPad15?p2435_10+p6592_10:0;
+  const ext40_50=b.extPad40?p2435_50+p6592_50:0, ext40_10=b.extPad40?p2435_10+p6592_10:0;
+  const screws_amt=clips_amt+p2435_50*50+p2435_10*10+p6592_50*50+p6592_10*10+skirt_pck*5*2;
+  const screws_pck=Math.ceil(screws_amt/100);
+  const products=[
+    {code:"PCK-30000-1",nl:"Bamboe vlonderplank bundel",          en:"Bamboo decking board bundle",          pckSize:4,   amt:boards_amt,  pck:boards_pck,  show:true},
+    {code:"PCK-30001-1",nl:"Bamboe vlonderplint bundel",          en:"Bamboo decking skirting bundle",       pckSize:4,   amt:skirt_amt,   pck:skirt_pck,   show:skirtM>0},
+    {code:"BAM-1002-1", nl:"Vuren onderbalk 50×70×3000mm",        en:"Impregnated pine cross-beam 50×70mm",  pckSize:3,   amt:cb_amt,      pck:cb_pck,      show:b.crossBeams},
+    {code:"PCK-30002-1",nl:"Bamboe planken clip bundel 100 st",   en:"Bamboo clip bundle 100 pcs",           pckSize:100, amt:clips_amt,   pck:clips_pck,   show:true},
+    {code:"PCK-30003-1",nl:"Bamboe U-clip bundel 50 st",          en:"Bamboo U-clip bundle 50 pcs",          pckSize:50,  amt:uclips_amt,  pck:uclips_pck,  show:true},
+    {code:"PCK-30004-1",nl:"Bamboe Z-clip bundel 50 st",          en:"Bamboo Z-clip bundle 50 pcs",          pckSize:50,  amt:zclips_amt,  pck:zclips_pck,  show:skirtM>0},
+    {code:"PCK-30005-1",nl:"Stelvoet 24–35mm bundel 50 st",       en:"Pedestal 24–35mm bundle 50 pcs",       pckSize:50,  amt:ped_base,    pck:p2435_50,    show:b.pedestal2435},
+    {code:"PCK-30006-1",nl:"Stelvoet 24–35mm bundel 10 st",       en:"Pedestal 24–35mm bundle 10 pcs",       pckSize:10,  amt:null,        pck:p2435_10,    show:b.pedestal2435&&p2435_10>0},
+    {code:"PCK-30007-1",nl:"Stelvoet 65–92mm bundel 50 st",       en:"Pedestal 65–92mm bundle 50 pcs",       pckSize:50,  amt:ped_base,    pck:p6592_50,    show:b.pedestal6592},
+    {code:"PCK-30008-1",nl:"Stelvoet 65–92mm bundel 10 st",       en:"Pedestal 65–92mm bundle 10 pcs",       pckSize:10,  amt:null,        pck:p6592_10,    show:b.pedestal6592&&p6592_10>0},
+    {code:"PCK-30009-1",nl:"Ophoogschijf 15mm bundel 50 st",      en:"Extension pad 15mm bundle 50 pcs",     pckSize:50,  amt:null,        pck:ext15_50,    show:b.extPad15},
+    {code:"PCK-30010-1",nl:"Ophoogschijf 15mm bundel 10 st",      en:"Extension pad 15mm bundle 10 pcs",     pckSize:10,  amt:null,        pck:ext15_10,    show:b.extPad15&&ext15_10>0},
+    {code:"PCK-30011-1",nl:"Ophoogschijf 40mm bundel 50 st",      en:"Extension pad 40mm bundle 50 pcs",     pckSize:50,  amt:null,        pck:ext40_50,    show:b.extPad40},
+    {code:"PCK-30012-1",nl:"Ophoogschijf 40mm bundel 10 st",      en:"Extension pad 40mm bundle 10 pcs",     pckSize:10,  amt:null,        pck:ext40_10,    show:b.extPad40&&ext40_10>0},
+    {code:"PCK-30013-1",nl:"Houtschroef T20 M4×35mm bundel 100 st",en:"Wood screw T20 bundle 100 pcs",      pckSize:100, amt:screws_amt,  pck:screws_pck,  show:true},
+  ].filter(p=>p.show&&p.pck>0);
+  return {area,circ,cbRows,ped_base,products};
+}
+
+function BamToggle({active,onClick,title,desc,icon}) {
+  return (
+    <button onClick={onClick} style={{display:"flex",alignItems:"flex-start",gap:11,padding:"12px 14px",background:active?T.selectedBg:T.white,border:`1.5px solid ${active?T.lime:T.lightGrey}`,borderRadius:8,textAlign:"left",fontFamily:"inherit",transition:"all .15s",width:"100%",cursor:"pointer",boxShadow:active?"0 2px 8px rgba(128,151,0,.1)":"none"}}>
+      <div style={{width:34,height:34,borderRadius:7,flexShrink:0,background:active?"#daefc2":T.lightGrey,display:"flex",alignItems:"center",justifyContent:"center",transition:"background .15s"}}>
+        <Icon name={icon} size={16} color={active?T.green:T.midGrey}/>
+      </div>
+      <div style={{flex:1,minWidth:0}}>
+        <div style={{fontSize:13,fontWeight:700,color:T.green,marginBottom:2}}>{title}</div>
+        {desc&&<p style={{fontSize:11,color:T.grey,lineHeight:1.5,margin:0}}>{desc}</p>}
+      </div>
+      <div style={{width:17,height:17,borderRadius:4,flexShrink:0,marginTop:1,border:`2px solid ${active?T.lime:T.lightGrey}`,background:active?T.lime:T.white,display:"flex",alignItems:"center",justifyContent:"center",transition:"all .15s"}}>
+        {active&&<Icon name="check" size={10} color={T.white}/>}
+      </div>
+    </button>
+  );
+}
+
+function BamDirCard({active,onClick,label,sub,dir}) {
+  return (
+    <button onClick={onClick} style={{flex:1,padding:"12px 10px",background:active?T.selectedBg:T.white,border:`1.5px solid ${active?T.lime:T.lightGrey}`,borderRadius:8,cursor:"pointer",fontFamily:"inherit",textAlign:"center",transition:"all .15s",boxShadow:active?"0 2px 8px rgba(128,151,0,.1)":"none"}}>
+      <div style={{width:"100%",height:52,position:"relative",marginBottom:8,borderRadius:4,overflow:"hidden",background:active?"#f8fef2":"#f5f5f5",border:`1.5px solid ${active?T.lime:T.lightGrey}`}}>
+        {dir==="depth"
+          ? [0,1,2,3,4,5].map(i=><div key={i} style={{position:"absolute",top:0,bottom:0,left:`${i*16.6}%`,width:"13%",background:active?`${T.lime}25`:"#e0e0e0",borderRadius:1}}/>)
+          : [0,1,2,3,4,5].map(i=><div key={i} style={{position:"absolute",left:0,right:0,top:`${i*16.6}%`,height:"13%",background:active?`${T.lime}25`:"#e0e0e0",borderRadius:1}}/>)
+        }
+      </div>
+      <div style={{fontSize:12,fontWeight:700,color:active?T.green:T.grey,marginBottom:2}}>{label}</div>
+      <div style={{fontSize:10,color:T.midGrey,marginBottom:8}}>{sub}</div>
+      <div style={{width:16,height:16,borderRadius:"50%",border:`2px solid ${active?T.green:T.lightGrey}`,background:T.white,margin:"0 auto",display:"flex",alignItems:"center",justifyContent:"center"}}>
+        {active&&<div style={{width:7,height:7,borderRadius:"50%",background:T.green}}/>}
+      </div>
+    </button>
+  );
+}
+
+function BamSkirtDiagram({b,onToggle}) {
+  const W=parseFloat(b.width)||4, D=parseFloat(b.depth)||3;
+  const sides=[
+    {key:"skirt1",label:"Zijde 1 (voor)",  dim:`${W} m`, edge:"top"},
+    {key:"skirt2",label:"Zijde 2 (rechts)", dim:`${D} m`, edge:"right"},
+    {key:"skirt3",label:"Zijde 3 (achter)", dim:`${W} m`, edge:"bottom"},
+    {key:"skirt4",label:"Zijde 4 (links)",  dim:`${D} m`, edge:"left"},
+  ];
+  const edgeStyle = {
+    top:    {top:0,    left:14,right:14,  height:14},
+    bottom: {bottom:0, left:14,right:14,  height:14},
+    left:   {left:0,   top:14, bottom:14, width:14},
+    right:  {right:0,  top:14, bottom:14, width:14},
+  };
+  return (
+    <div>
+      {/* Visual diagram */}
+      <div style={{position:"relative",width:"100%",paddingBottom:"55%",marginBottom:14}}>
+        <div style={{position:"absolute",inset:0,display:"flex",alignItems:"center",justifyContent:"center"}}>
+          <div style={{position:"relative",width:"68%",height:"85%"}}>
+            {/* Floor */}
+            <div style={{position:"absolute",top:14,left:14,right:14,bottom:14,background:T.beige,border:`1px solid ${T.bone}`,borderRadius:3,overflow:"hidden"}}>
+              {[1,2,3,4].map(i=><div key={i} style={{position:"absolute",top:0,bottom:0,left:`${i*20}%`,width:1,background:`${T.lime}25`}}/>)}
+              <div style={{position:"absolute",inset:0,display:"flex",alignItems:"center",justifyContent:"center"}}>
+                <span style={{fontSize:10,color:T.midGrey,fontWeight:700}}>{W}×{D} m</span>
+              </div>
+            </div>
+            {/* Skirt edges */}
+            {sides.map(side=>(
+              <button key={side.key} onClick={()=>onToggle(side.key)} aria-pressed={!!b[side.key]} aria-label={`${side.label}: plint ${b[side.key]?"verwijderen":"toevoegen"}`}
+                style={{position:"absolute",background:b[side.key]?T.lime:T.lightGrey,border:"none",cursor:"pointer",borderRadius:3,transition:"background .15s",display:"flex",alignItems:"center",justifyContent:"center",...edgeStyle[side.edge]}}>
+                {b[side.key]&&<Icon name="check" size={9} color={T.white}/>}
+              </button>
+            ))}
+          </div>
+        </div>
+      </div>
+      {/* Toggle grid */}
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
+        {sides.map(side=>(
+          <BamToggle key={side.key} active={!!b[side.key]} onClick={()=>onToggle(side.key)} icon="layers" title={side.label} desc={side.dim}/>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function BamResultsTable({result}) {
+  if(!result||!result.products.length) return null;
+  return (
+    <div style={{borderRadius:8,overflow:"hidden",border:`1px solid ${T.lightGrey}`,marginBottom:12}}>
+      <div style={{background:T.green,padding:"10px 14px",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+        <h3 style={{fontSize:11,fontWeight:700,color:T.white,textTransform:"uppercase",letterSpacing:".07em",margin:0,display:"flex",alignItems:"center",gap:7}}>
+          <Icon name="package" size={13} color="rgba(255,255,255,.7)"/>Benodigde materialen
+        </h3>
+        <span style={{fontSize:11,color:"rgba(255,255,255,.55)"}}>{result.products.length} artikelen</span>
+      </div>
+      <div style={{display:"grid",gridTemplateColumns:"1fr 64px 64px",padding:"5px 14px",background:T.bone,fontSize:9,fontWeight:700,color:T.grey,textTransform:"uppercase",letterSpacing:".07em",borderBottom:`1px solid ${T.lightGrey}`,gap:8}}>
+        <span>Artikel</span><span style={{textAlign:"right"}}>Aantal</span><span style={{textAlign:"right"}}>Bundels</span>
+      </div>
+      <dl style={{margin:0}}>
+        {result.products.map((p,i)=>(
+          <div key={p.code} style={{display:"grid",gridTemplateColumns:"1fr 64px 64px",padding:"9px 14px",gap:8,background:i%2===0?T.white:T.beige,borderBottom:i<result.products.length-1?`1px solid ${T.lightGrey}`:"none",alignItems:"center"}}>
+            <div>
+              <dt style={{fontSize:12,fontWeight:600,color:T.green,margin:0,marginBottom:1}}>{p.nl}</dt>
+              <dd style={{fontSize:10,color:T.midGrey,margin:0,letterSpacing:".02em"}}>{p.code}</dd>
+            </div>
+            <dd style={{fontSize:11,fontWeight:600,color:T.grey,textAlign:"right",margin:0}}>
+              {p.amt!=null?Math.ceil(p.amt).toLocaleString("nl-NL"):"—"}
+            </dd>
+            <dd style={{textAlign:"right",margin:0}}>
+              <span style={{display:"inline-block",background:`${T.lime}15`,border:`1px solid ${T.lime}40`,borderRadius:4,padding:"2px 8px",fontSize:13,fontWeight:800,color:T.green}}>
+                {p.pck}×
+              </span>
+            </dd>
+          </div>
+        ))}
+      </dl>
+    </div>
+  );
+}
+
+function BamDimIn({label, unit, value, onChange, hint}) {
+  const [focused, setFocused] = useState(false);
+  const ok = !value || (!isNaN(parseFloat(value)) && parseFloat(value) > 0);
+  return (
+    <div>
+      <label style={{display:"block",fontSize:10,fontWeight:700,color:T.midGrey,textTransform:"uppercase",letterSpacing:".09em",marginBottom:7}}>{label}</label>
+      <div style={{position:"relative"}}>
+        <input type="number" step="0.1" min="0.1" max="30" value={value}
+          onChange={e=>onChange(e.target.value)}
+          onFocus={()=>setFocused(true)}
+          onBlur={()=>setFocused(false)}
+          placeholder="bijv. 4.0"
+          style={{width:"100%",padding:"12px 44px 12px 14px",
+            border:`1.5px solid ${!ok?"#EF4444":focused?T.green:T.lightGrey}`,
+            borderRadius:4,fontSize:15,fontWeight:700,color:T.green,
+            background:T.white,fontFamily:"inherit",outline:"none",
+            transition:"border-color .15s",
+            MozAppearance:"textfield",WebkitAppearance:"none",appearance:"none"}}/>
+        <span style={{position:"absolute",right:14,top:"50%",transform:"translateY(-50%)",fontSize:12,fontWeight:700,color:T.midGrey,pointerEvents:"none"}}>{unit}</span>
+      </div>
+      {hint&&<p style={{fontSize:11,color:T.grey,marginTop:5,lineHeight:1.55,margin:"5px 0 0"}}>{hint}</p>}
+    </div>
+  );
+}
+
+function StepBambooWrap({c,s}) {
+  const b = c.bamboo || {width:"",depth:"",direction:"depth",crossBeams:false,pedestal2435:false,pedestal6592:false,extPad15:false,extPad40:false,skirt1:false,skirt2:false,skirt3:false,skirt4:false};
+  const upd = useCallback(patch => s({...c, bamboo:{...b,...patch}}), [c,b,s]);
+  const toggle = useCallback(key => upd({[key]:!b[key]}), [upd,b]);
+
+  const W = parseFloat(b.width)||0;
+  const D = parseFloat(b.depth)||0;
+  const result = useMemo(()=>calcBamboo(b), [b.width,b.depth,b.direction,b.crossBeams,b.pedestal2435,b.pedestal6592,b.extPad15,b.extPad40,b.skirt1,b.skirt2,b.skirt3,b.skirt4]);
+  const hasSize = !!(W && D);
+
+  return (
+    <div>
+      <div style={{fontSize:10,fontWeight:700,color:T.orange,textTransform:"uppercase",letterSpacing:".1em",marginBottom:5}}>Extra's</div>
+      <div style={{marginBottom:22}}>
+        <h2 style={{fontSize:21,fontWeight:800,color:T.green,letterSpacing:"-.025em",lineHeight:1.2,marginBottom:4}}>Bamboe Vlonders</h2>
+        <p style={{fontSize:13,color:T.grey,lineHeight:1.6}}>Vul de maten in en configureer uw terras. Het systeem berekent automatisch alle benodigde materialen op basis van de productformules.</p>
+      </div>
+
+      {/* Dimensions */}
+      <section aria-label="Afmetingen" style={{background:T.white,border:`1px solid ${T.lightGrey}`,borderRadius:8,padding:"16px 16px 18px",marginBottom:12}}>
+        <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:14}}>
+          <div style={{width:28,height:28,borderRadius:6,background:`${T.lime}18`,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}><Icon name="ruler" size={14} color={T.lime}/></div>
+          <h3 style={{fontSize:13,fontWeight:700,color:T.green,margin:0}}>Afmetingen terras</h3>
+        </div>
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:14,marginBottom: hasSize?12:0}}>
+          <BamDimIn label="Breedte" unit="m" value={b.width}  onChange={v=>upd({width:v})}  hint="Breedte van het terrasoppervlak"/>
+          <BamDimIn label="Diepte"  unit="m" value={b.depth}  onChange={v=>upd({depth:v})}  hint="Diepte van het terrasoppervlak"/>
+        </div>
+        {hasSize&&result&&(
+          <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:1,borderRadius:6,overflow:"hidden",border:`1px solid ${T.bone}`}}>
+            {[["Oppervlak",`${result.area.toFixed(2)} m²`],["Omtrek",`${result.circ.toFixed(1)} m`],["Dwarsliggers",`${result.cbRows} rijen`],["Stelvoet grid",`${Math.ceil(result.ped_base)} st.`]].map(([l,v],i)=>(
+              <div key={l} style={{padding:"9px 10px",background:i%2===0?T.selectedBg:T.white,textAlign:"center"}}>
+                <div style={{fontSize:9,fontWeight:700,color:T.midGrey,textTransform:"uppercase",letterSpacing:".06em",marginBottom:2}}>{l}</div>
+                <div style={{fontSize:12,fontWeight:800,color:T.green}}>{v}</div>
+              </div>
+            ))}
+          </div>
+        )}
+      </section>
+
+      {/* Direction */}
+      <section aria-label="Legrichting" style={{background:T.white,border:`1px solid ${T.lightGrey}`,borderRadius:8,padding:"16px 16px 18px",marginBottom:12}}>
+        <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:14}}>
+          <div style={{width:28,height:28,borderRadius:6,background:`${T.lime}18`,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}><Icon name="arrows" size={14} color={T.lime}/></div>
+          <h3 style={{fontSize:13,fontWeight:700,color:T.green,margin:0}}>Legrichting planken</h3>
+        </div>
+        <div style={{display:"flex",gap:10,marginBottom:10}}>
+          <BamDirCard active={b.direction==="depth"} onClick={()=>upd({direction:"depth"})} dir="depth" label="Langs breedte" sub="Planken lopen dwars op de diepte"/>
+          <BamDirCard active={b.direction==="width"} onClick={()=>upd({direction:"width"})} dir="width" label="Langs diepte"  sub="Planken lopen dwars op de breedte"/>
+        </div>
+        <Note color={T.lime} icon="info">De legrichting bepaalt zaagsnede en het aantal benodigde dwarsliggers.</Note>
+      </section>
+
+      {/* Onderbouw */}
+      <section aria-label="Onderbouw" style={{background:T.white,border:`1px solid ${T.lightGrey}`,borderRadius:8,padding:"16px 16px 18px",marginBottom:12}}>
+        <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:14}}>
+          <div style={{width:28,height:28,borderRadius:6,background:`${T.lime}18`,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}><Icon name="layers" size={14} color={T.lime}/></div>
+          <h3 style={{fontSize:13,fontWeight:700,color:T.green,margin:0}}>Onderbouw & bevestiging</h3>
+        </div>
+        <SL>Dwarsbalken</SL>
+        <div style={{marginBottom:16}}>
+          <BamToggle active={b.crossBeams} onClick={()=>toggle("crossBeams")} icon="grid" title="Vuren dwarsbalken 50×70×3000mm" desc="Geïmpregneerde onderbalk als draagconstructie. Hart-op-hart 370 mm."/>
+        </div>
+        <SL>Stelvoeten (kies maximaal één type)</SL>
+        <div style={{display:"flex",flexDirection:"column",gap:8,marginBottom:b.pedestal2435||b.pedestal6592?12:0}}>
+          <BamToggle active={b.pedestal2435} onClick={()=>upd({pedestal2435:!b.pedestal2435,pedestal6592:false})} icon="layers" title="Stelvoet 24–35 mm" desc="Verstelbaar 24–35 mm. Voor kleine hoogteverschillen."/>
+          <BamToggle active={b.pedestal6592} onClick={()=>upd({pedestal6592:!b.pedestal6592,pedestal2435:false})} icon="layers" title="Stelvoet 65–92 mm" desc="Verstelbaar 65–92 mm. Voor grotere hoogteverschillen."/>
+        </div>
+        {(b.pedestal2435||b.pedestal6592)&&(<>
+          <SL>Ophoogschijven</SL>
+          <div style={{display:"flex",flexDirection:"column",gap:8}}>
+            <BamToggle active={b.extPad15} onClick={()=>toggle("extPad15")} icon="layers" title="Ophoogschijf 15 mm" desc="Fijne hoogte-afstelling van +15 mm bovenop stelvoet."/>
+            <BamToggle active={b.extPad40} onClick={()=>toggle("extPad40")} icon="layers" title="Ophoogschijf 40 mm" desc="Extra hoogte van +40 mm bovenop stelvoet."/>
+          </div>
+        </>)}
+      </section>
+
+      {/* Skirting */}
+      <section aria-label="Afwerking" style={{background:T.white,border:`1px solid ${T.lightGrey}`,borderRadius:8,padding:"16px 16px 18px",marginBottom:12}}>
+        <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:14}}>
+          <div style={{width:28,height:28,borderRadius:6,background:`${T.lime}18`,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}><Icon name="grid" size={14} color={T.lime}/></div>
+          <h3 style={{fontSize:13,fontWeight:700,color:T.green,margin:0}}>Afwerking — Bamboe plint per zijde</h3>
+        </div>
+        {hasSize
+          ? <BamSkirtDiagram b={b} onToggle={key=>toggle(key)}/>
+          : <Note color={T.midGrey} icon="info">Vul eerst de afmetingen in om de plint per zijde te configureren.</Note>
+        }
+      </section>
+
+      {/* Results */}
+      {hasSize&&result?(
+        <div>
+          <BamResultsTable result={result}/>
+          <Note color={T.lime} icon="info">
+            Inclusief 4% zaagverlies, afgerond op volledige bundels. Plankbreedte 139 mm, planklente 1852 mm, hart-op-hart dwarsliggers 370 mm.
+          </Note>
+        </div>
+      ):(
+        <div style={{background:T.beige,border:`1px dashed ${T.bone}`,borderRadius:8,padding:"28px 20px",textAlign:"center"}}>
+          <Icon name="ruler" size={28} color={T.lightGrey} style={{display:"block",margin:"0 auto 10px"}}/>
+          <p style={{fontSize:13,color:T.midGrey,margin:0,lineHeight:1.6}}>Vul uw terrasafmetingen in om de benodigde materialen te berekenen.</p>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function OverzichtAccordions({ secs, price }) {
   // Each accordion is independently togglable; Prijsoverzicht has its own state too
   const [priceOpen, setPriceOpen] = useState(true);
@@ -1674,6 +1983,7 @@ export default function App() {
     if(sid==="sw_acc")      return <StepSwAcc      c={cfg} s={setCfg}/>;
     if(sid==="extra_zon")   return <StepExtraZon   c={cfg} s={setCfg}/>;
     if(sid==="overzicht")   return <StepOverzicht  c={cfg} price={price}/>;
+    if(sid==="bamboo")      return <StepBambooWrap c={cfg} s={setCfg}/>;
     return null;
   };
 
